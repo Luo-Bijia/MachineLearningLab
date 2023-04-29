@@ -1,0 +1,311 @@
+[toc]
+
+------
+
+# 贝叶斯分类器
+
+首先要理解贝叶斯决策的理论依据，引用西瓜书上的原话：对于分类任务，在所有相关概率都已知的理想情形下，贝叶斯决策论考虑如何基于这些**概率**和**误判损失**来选择最优的类别标记。
+
+然后引入我们很熟悉的贝叶斯公式：
+$$
+P(c\mid \boldsymbol{x}) =  \frac{P(c)P(\boldsymbol{x} \mid c)}{P(\boldsymbol{x})}
+$$
+其中 $c$ 是类别标记，$x$ 是样本点（一个包含n维属性的向量）。$P(c)$就是所谓的“先验”概率，这个概率是可以通过数据集统计直接得到的，那么$P(c \mid \boldsymbol{x})$就是所谓的“后验“概率，即我们要在已有数据的信息背景下推断得到的。
+
+----
+
+与其它机器学习的算法不同，贝叶斯分类算法似乎看不出一个明显的==待训练参数==，但观察公式也能明白，我们要求出的$P(c \mid \boldsymbol{x})$是由$P(c)、P(\boldsymbol{x} \mid c)$以及$P(\boldsymbol{x})$三者变量所共同决定的，而这三者的现实意义其实就是给定的**信息背景（数据集）**——多数情况下，我们在不同的信息背景下总能得到不同的$P(c \mid \boldsymbol{x})、P(c)、P(\boldsymbol{x} \mid c)$，进而推出不同的$P(c \mid \boldsymbol{x})$。
+
+有些信息背景对于作出决策的贡献是“好的”，这时$P(c \mid \boldsymbol{x})$体现出来的意义能很真实地反映出作出某项决策的正确性，而在有些信息背景（比如样本过于稀疏）下得出的结果就并不能很好地反映待检测样本所属的真实类别，进而造成误分类。
+
+于是Bayes分类器的训练意义在于寻求“好的”数据集，使得后验概率值能较好地反映出决策的真实性。
+
+-----
+
+# 何为朴素
+
+从概率学原理来讲，类条件概率$P(\boldsymbol{x} \mid c)$，是所有属性上的**联合概率**，很难从有限的训练样本直接估计而得。那么为避开这个障碍，**朴素贝叶斯分类器**采用了“属性条件独立性假设”：对已知类别假设所有属性之间**相互独立**。
+
+此时类条件概率满足：
+$$
+P(\boldsymbol{x} \mid c)=\prod_{i=1}^{d}P(x_i \mid c)
+$$
+其中 $d$ 代表样本点的属性个数，$x_i$ 代表$\boldsymbol{x}$的各个属性。
+
+于是开头的贝叶斯公式进一步推：
+$$
+P(c\mid \boldsymbol{x}) =  \frac{P(c)P(\boldsymbol{x} \mid c)}{P(\boldsymbol{x})}=\frac{P(c)\prod_{i=1}^{d}P(x_i \mid c)}{P(\boldsymbol{x})}
+$$
+于是在此假设前提下，进而大大地简化了计算，这也正是“朴素(Naive)”一词修饰的由来。
+
+而且在一般分类任务下，是不会计算$P(\boldsymbol x)$的，而是只计算分子便进行比较。
+
+----
+
+# 案例：广告邮件分类
+
+## 词向量表示
+
+- 每个词语的出现各看成一个事件，先分别计算单个词语的事件概率进行训练，然后将一个完整的邮件看成这些事件的交事件。
+
+给定一系列邮件的文本，将每个邮件的关键词提取出来，方便起见，这里先将输入的数据集直接设置成关键词（后续可能会用jieba等库来对邮件作真正地关键词提取），而这些关键词组成的列表作为一个数据样本，所以加载数据集如下
+
+```python
+# 创建数据集,加载数据
+adClass = 1  # 广告,垃圾标识
+
+def loadDataSet():
+    '''加载数据集合及其对应的分类，这里相当于6个数据样本'''
+    wordList = 
+    [['周六', '公司', '一起', '聚餐', '时间'],
+     ['优惠', '返利', '打折', '优惠', '金融', '理财'],
+     ['喜欢', '机器学习', '一起', '研究', '欢迎', '贝叶斯', '算法', '公式'],
+     ['公司', '发票', '税点', '优惠', '增值税', '打折'],
+     ['北京', '今天', '雾霾', '不宜', '外出', '时间', '在家', '讨论', '学习'],
+     ['招聘', '兼职', '日薪', '保险', '返利']]
+
+    # 1：广告  0：正常
+    classVec = [0, 1, 0, 1, 0, 1]
+    return wordList, classVec
+```
+
+-----
+
+然后，将这些词全放在一起，构成一个“语料库”。
+
+```py
+def doc2VecList(docList):		#docList是一个二维矩阵，每行表示一个邮件的关键词组成的列表
+    """数据进行并集操作，最后返回一个词不重复的并集"""
+    a = list(reduce(lambda x, y:set(x) | set(y), docList))
+    return a  #['','',...,'']
+```
+
+这么做的意义在于我们要改变这个数据样本的表示方式（否则不利于概率计算），在这里就是用**词向量**的表示方法：
+
+> 对于一个数据样本，将其视作一个长度为$n=\left | 语料库中词的个数 \right | $的01向量，如果样本某个词在语料库中出现了，那就在这个词的对应位置记1，否则记0.
+>
+> 于是该词向量就有了n个属性，每个属性取值∈{0,1}。
+
+```py
+def words2Vec(vecList, inputWords):     #vecList:语料库，inputWords:输入的词组
+    '''把单词转化为词向量'''
+    dimensions = len(vecList)
+    resultVec = [0] * dimensions
+    for i in range(dimensions):
+        if vecList[i] in inputWords:
+            resultVec[i] += 1
+    #转化为一维数组
+    return array(resultVec)
+
+```
+
+---
+
+## Laplacian平滑
+
+接下来就是计算
+
+1. $$
+   P(c)
+   $$
+
+2. 
+
+3. $$
+   P(\boldsymbol{x} \mid c)=\prod_{i=1}^{d}P(x_i \mid c)
+   $$
+
+但这里尤其需要注意的是待分类样本词向量中可能存在“词没有记录在语料库”中的情况，也即它属于任何类别的概率值为0，显然会导致$\prod_{i=1}^{d}P(x_i \mid c)$直接变成0不合理，因此进行**+1的Laplacian平滑处理**：
+$$
+\hat{P}{(c)} = \frac{|D_c| + 1} {|D|+N}
+$$
+
+$$
+\hat{P}({x_i\mid c}) = \frac{|D_{c,x_i}| + 1} {|D_c|+N_i}
+$$
+
+- 也就是令没出现过的词“所属类别0和类别1的次数**均+1**”，“类别0的样本数和类别1的样本数**均+2（类别数）**”。
+
+在代码中体现为：
+
+```python
+'''Laplacian +1平滑'''
+# 全部都初始化为1(全1数组)， 防止出现概率为0的情况
+p0Num = ones(numWords)
+p1Num = ones(numWords)
+# 相应的单词初始化为2
+p0Words = 2.0
+p1Words = 2.0
+```
+
+----
+
+## 训练过程
+
+**注*：这里的训练过程跟测试集的内容无关系，而是一种预存储**。
+
+首先，根据训练集计算从$i\in$[1~ $n]$ 的**所有**$P(x_i \mid 0)$和$P(x_i \mid 1)$，在这里$x_i$指代的语料库中第$i$个词，然后存到两个数组里——`p0Vec`和`p1Vec`，在这里有个小技巧就是在存储时对每个P值都取了一个`log`运算，这样可以扩大数值域，方便后面的计算。
+
+```python
+# 统计每个分类的词的总数
+    for i in range(numTrainClass):
+        if trainClass[i] == 1:
+            # 数组在对应的位置上相加
+            p1Num += trainMatrix[i]
+            p1Words += sum(trainMatrix[i])
+        else:
+            p0Num += trainMatrix[i]
+            p0Words += sum(trainMatrix[i])
+
+    # 计算每种类型里面， 每个单词出现的概率
+    # 在计算过程中，由于概率的值较小，于是取对数扩大数值域
+    p0Vec = log(p0Num / p0Words)	#P(所有xi|0)
+    p1Vec = log(p1Num / p1Words)	#P(所有xi|1)
+    # 计算在类别中1出现的概率，0出现的概率可通过1-p得到
+    pClass1 = sum(trainClass) / float(numTrainClass)	#P(c=1)
+```
+
+----
+
+## 分类过程
+
+对于测试集的词向量`testVec`存在如下关系：
+$$
+\prod_{i=1}^{d}P(x_i \mid 1或0)=\prod_{i\in\{i\mid testVec[i] = 1\}}P(x_i \mid 1或0)
+$$
+也就是说，只需要`testVec * p0Vec` 和`testVec * p1Vec` 便可分别得到**在testVec第i个位置上为1**的$P(x_i \mid 0)$和$P(x_i \mid 1)$了！
+
+所以只要计算$P(c)\prod_{i\in\{i\mid testVec[i] = 1\}}P(x_i \mid 1或0)$便得到两个后验概率，同样根据对数特性$ln[{ P(c)×P(X1|c)×P(X2|c)×...×P(Xn|c)}] = lnP(c) + lnP(X1|c) + ... + lnP(Xn|c)$，将乘法改成加法：
+
+```py
+def classifyNB(testVec, p0Vec, p1Vec, pClass1):
+    """分类, 返回分类结果 0 or 1"""
+    # 因为概率的值太小了，所以乘法改加法，可以简化计算且不失精度
+    p1 = sum(testVec * p1Vec) + log(pClass1)
+    p0 = sum(testVec * p0Vec) + log(1 - pClass1)
+    if p0 > p1:
+        return 0
+    return 1
+```
+
+-----
+
+# 完整代码
+
+```python
+#导入所需库文件
+from numpy import *
+from functools import reduce
+import re
+import csv
+
+# 创建数据集,加载数据
+adClass = 1  # 广告,垃圾标识
+def loadDataSet():
+    '''加载数据集合及其对应的分类'''
+    wordList = [['周六', '公司', '一起', '聚餐', '时间'],
+                ['优惠', '返利', '打折', '优惠', '金融', '理财'],
+    ['喜欢', '机器学习', '一起', '研究', '欢迎', '贝叶斯', '算法', '公式'],
+    ['公司', '发票', '税点', '优惠', '增值税', '打折'],
+    ['北京', '今天', '雾霾', '不宜', '外出', '时间', '在家', '讨论', '学习'],
+    ['招聘', '兼职', '日薪', '保险', '返利']]
+
+    # 1：广告  0：正常
+    classVec = [0, 1, 0, 1, 0, 1]
+    return wordList, classVec
+
+def doc2VecList(docList):		#docList是一个二维矩阵，每行表示一个邮件的关键词组成的列表
+    """数据进行并集操作，最后返回一个词不重复的并集"""
+    a = list(reduce(lambda x, y:set(x) | set(y), docList))
+    return a  #['','',...,'']
+
+def words2Vec(vecList, inputWords):     #vecList:语料库，inputWords:输入的词组
+    '''把单词转化为词向量'''
+    dimensions = len(vecList)
+    resultVec = [0] * dimensions
+    for i in range(dimensions):
+        if vecList[i] in inputWords:
+            resultVec[i] += 1
+    #转化为一维数组
+    return array(resultVec)
+
+def trainNB(trainMatrix, trainClass):
+    """函数说明:计算，生成每个词对于类别上的概率"""
+    # 类别行数——6
+    numTrainClass = len(trainClass)
+    # 列数——32
+    numWords = len(trainMatrix[0])
+
+    '''Laplacian +1平滑'''
+    # 全部都初始化为1(全1数组)， 防止出现概率为0的情况
+    p0Num = ones(numWords)
+    p1Num = ones(numWords)
+    # 相应的单词初始化为2
+    p0Words = 2.0
+    p1Words = 2.0
+
+    # 统计每个分类的词的总数
+    for i in range(numTrainClass):
+        if trainClass[i] == 1:
+            # 数组在对应的位置上相加
+            p1Num += trainMatrix[i]
+            p1Words += sum(trainMatrix[i])
+        else:
+            p0Num += trainMatrix[i]
+            p0Words += sum(trainMatrix[i])
+
+    # 计算每种类型里面， 每个单词出现的概率
+    # 在计算过程中，由于概率的值较小，于是取对数扩大数值域
+    p0Vec = log(p0Num / p0Words)	#P(所有xi|0)
+    p1Vec = log(p1Num / p1Words)	#P(所有xi|1)
+    # 计算在类别中1出现的概率，0出现的概率可通过1-p得到
+    pClass1 = sum(trainClass) / float(numTrainClass)	#P(c=1)
+    
+    return p0Vec, p1Vec, pClass1
+
+def classifyNB(testVec, p0Vec, p1Vec, pClass1):
+    """分类, 返回分类结果 0 or 1"""
+    # 因为概率的值太小了，所以乘法改加法，可以简化计算且不失精度
+    p1 = sum(testVec * p1Vec) + log(pClass1)
+    p0 = sum(testVec * p0Vec) + log(1 - pClass1)
+    if p0 > p1:
+        return 0
+    return 1
+
+def printClass(words, testClass):
+    if testClass == adClass:
+        print(words, '推测为：广告邮件')
+    else:
+        print(words, '推测为：正常邮件')
+
+def tNB():
+    # 加载训练数据集
+    docList, classVec = loadDataSet()    #单词矩阵、 01向量
+    
+    # 生成包含所有单词的list
+    allWordsVec = doc2VecList(docList)
+    
+    # 构建词向量矩阵
+    '''lambda中的x对应docList的每一行词组'''
+    trainMat = list(map(lambda x : words2Vec(allWordsVec, x), docList))   #和docList对应的行(词)向量组
+    
+    # 训练计算每个词在分类上的概率
+    # 其中p0V:每个单词在“非”分类出现的概率， p1V:每个单词在“是”分类出现的概率  pClass1：类别中是1的概率
+    p0V, p1V, pClass1 = trainNB(trainMat, classVec)
+    
+    # 测试数据集
+    testwords = ['公司', '聚餐', '讨论', '贝叶斯']
+    
+    # 转换成单词向量，32个单词构成的数组，如果此单词在数组中，数组的项值置1
+    testVec = words2Vec(allWordsVec, testwords)
+    
+    # 通过将单词向量testVec代入，根据贝叶斯公式，比较各个类别的后验概率，判断当前数据的分类情况
+    testClass = classifyNB(testVec, p0V, p1V, pClass1)
+    
+    # 打印出测试结果
+    printClass(testwords, testClass)
+    
+if __name__ == '__main__':
+    tNB()
+```
+
